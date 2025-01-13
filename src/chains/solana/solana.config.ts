@@ -2,7 +2,7 @@ import { TokenListType } from '../../services/base';
 import { ConfigManagerV2 } from '../../services/config-manager-v2';
 interface NetworkConfig {
   name: string;
-  nodeURLs: string;
+  nodeURL: string;
   tokenListType: TokenListType;
   tokenListSource: string;
   nativeCurrencySymbol: string;
@@ -23,15 +23,11 @@ export function getSolanaConfig(
   return {
     network: {
       name: networkName,
-      nodeURLs: ConfigManagerV2.getInstance().get(
-        chainName + '.networks.' + networkName + '.nodeURLs'
+      nodeURL: ConfigManagerV2.getInstance().get(
+        chainName + '.networks.' + networkName + '.nodeURL'
       ),
-      tokenListType: ConfigManagerV2.getInstance().get(
-        chainName + '.networks.' + networkName + '.tokenListType'
-      ),
-      tokenListSource: ConfigManagerV2.getInstance().get(
-        chainName + '.networks.' + networkName + '.tokenListSource'
-      ),
+      tokenListType: 'FILE',
+      tokenListSource: './conf/lists/solflare-tokenlist.json',
       nativeCurrencySymbol: ConfigManagerV2.getInstance().get(
         chainName + '.networks.' + networkName + '.nativeCurrencySymbol'
       ),

@@ -29,9 +29,9 @@ import { TOKEN_PROGRAM_ID, unpackAccount } from "@solana/spl-token";
 
 import { countDecimals, TokenValue, walletPath } from '../../services/base';
 import { ConfigManagerCertPassphrase } from '../../services/config-manager-cert-passphrase';
+import { logger } from '../../services/logger';
 
 import {
-  getNotNullOrThrowError,
   runWithRetryAndTimeout,
 } from './solana.helpers';
 import { Config, getSolanaConfig } from './solana.config';
@@ -134,7 +134,7 @@ export class Solana implements Solanaish {
     this.nativeTokenSymbol = this._config.network.nativeCurrencySymbol
 
     // Parse comma-separated RPC URLs
-    const rpcUrlsString = this._config.network.nodeURLs;
+    const rpcUrlsString = this._config.network.nodeURL;
     const rpcUrls: string[] = [];
 
     if (rpcUrlsString) {
@@ -171,6 +171,8 @@ export class Solana implements Solanaish {
       cdnUrl: 'https://cdn.jsdelivr.net/gh/solflare-wallet/token-list/solana-tokenlist.json',
     });
     this._utl = new Client(config);
+
+    logger.info(`Using RPC endpoint: ${this.connectionPool.getNextConnection().rpcEndpoint}`);
 
   }
 
@@ -334,63 +336,142 @@ export class Solana implements Solanaish {
   }
 
   async getBalance(wallet: Keypair, symbols?: string[]): Promise<Record<string, number>> {
-    // Convert symbols to uppercase for case-insensitive matching
+    logger.info('=== Starting getBalance() ===');
+    
+    // Step 1: Initialize
     const upperCaseSymbols = symbols?.map(s => s.toUpperCase());
     const publicKey = wallet.publicKey;
     let balances: Record<string, number> = {};
+    logger.info(`Wallet public key: ${publicKey.toString()}`);
+    logger.info(`Requested symbols (uppercase): ${JSON.stringify(upperCaseSymbols)}`);
 
-    // Fetch SOL balance only if symbols is undefined or includes "SOL" (case-insensitive)
+    // Step 2: Get SOL balance
     if (!upperCaseSymbols || upperCaseSymbols.includes("SOL")) {
+      logger.info('Getting SOL balance...');
       const solBalance = await this.connectionPool.getNextConnection().getBalance(publicKey);
-      const solBalanceInSol = solBalance / Math.pow(10, 9); // Convert lamports to SOL
+      logger.info(`Raw SOL balance in lamports: ${solBalance}`);
+      const solBalanceInSol = solBalance / Math.pow(10, 9);
       balances["SOL"] = solBalanceInSol;
+      logger.info(`Converted SOL balance: ${solBalanceInSol}`);
     }
 
-    // Get all token accounts for the provided address
-    const accounts = await this.connectionPool.getNextConnection().getTokenAccountsByOwner(
+    // Step 3: Get token accounts
+    logger.info('Getting token accounts...');
+
+    // First try direct query for ai16z
+    if (upperCaseSymbols?.includes('AI16Z')) {
+      const ai16zMint = new PublicKey('HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC');
+      const ai16zAccounts = await this.connectionPool.getNextConnection().getParsedTokenAccountsByOwner(
+        publicKey,
+        { mint: ai16zMint }
+      );
+      logger.info(`Direct query found ${ai16zAccounts.value.length} ai16z accounts:`);
+      logger.info('AI16Z account details:', ai16zAccounts.value.map(acc => ({
+        pubkey: acc.pubkey.toString(),
+        mint: acc.account.data.parsed.info.mint,
+        owner: acc.account.data.parsed.info.owner,
+        amount: acc.account.data.parsed.info.tokenAmount.amount,
+        decimals: acc.account.data.parsed.info.tokenAmount.decimals
+      })));
+
+      // Add ai16z balance directly since we found it
+      if (ai16zAccounts.value.length > 0) {
+        const ai16zAccount = ai16zAccounts.value[0];
+        const amount = ai16zAccount.account.data.parsed.info.tokenAmount.amount;
+        const decimals = ai16zAccount.account.data.parsed.info.tokenAmount.decimals;
+        const uiAmount = Number(amount) / Math.pow(10, decimals);
+        balances['ai16z'] = uiAmount;
+        logger.info(`Added ai16z balance directly: ${uiAmount}`);
+      }
+    }
+
+    // Then do the normal query
+    const parsedAccounts = await this.connectionPool.getNextConnection().getParsedTokenAccountsByOwner(
       publicKey,
       { programId: TOKEN_PROGRAM_ID }
     );
+    logger.info(`Found ${parsedAccounts.value.length} parsed token accounts`);
+    logger.info('Parsed token accounts:', parsedAccounts.value.map(acc => ({
+      mint: acc.account.data.parsed.info.mint,
+      pubkey: acc.pubkey.toString()
+    })));
 
-    // Fetch the token list and create lookup map
+    // Original getTokenAccountsByOwner call
+    const accounts = await this.connectionPool.getNextConnection().getTokenAccountsByOwner(
+      publicKey,
+      { programId: TOKEN_PROGRAM_ID },
+      { commitment: 'confirmed' }
+    );
+    logger.info(`Found ${accounts.value.length} token accounts`);
+    logger.info('Token accounts:', accounts.value.map(acc => acc.pubkey.toString()));
+
+    // Step 4: Get token list and create lookup map
+    logger.info('Getting token list...');
     const tokenList = await this.getTokenList();
+    logger.info(`Token list contains ${tokenList.length} tokens`);
+
+    logger.info('Creating token definitions map...');
     const tokenDefs = tokenList.reduce((acc, token) => {
       if (!upperCaseSymbols || upperCaseSymbols.includes(token.symbol.toUpperCase())) {
+        logger.info(`Adding token to map: ${token.symbol} (${token.address})`);
         acc[token.address] = { symbol: token.symbol, decimals: token.decimals };
       }
       return acc;
     }, {});
+    logger.info(`Created map with ${Object.keys(tokenDefs).length} tokens`);
 
-    // Process token accounts
+    // Step 5: Process each token account
+    logger.info('Processing token accounts...');
     for (const value of accounts.value) {
-      const parsedTokenAccount = unpackAccount(value.pubkey, value.account);
-      const mint = parsedTokenAccount.mint;
-      const tokenDef = tokenDefs[mint.toBase58()];
-      if (tokenDef === undefined) continue;
+      try {
+        logger.info(`\n=== Processing token account: ${value.pubkey.toString()} ===`);
+        const parsedTokenAccount = unpackAccount(value.pubkey, value.account);
+        logger.info(`Parsed account mint: ${parsedTokenAccount.mint.toString()}`);
+        logger.info(`Parsed account owner: ${parsedTokenAccount.owner.toString()}`);
+        logger.info(`Parsed account amount: ${parsedTokenAccount.amount.toString()}`);
 
-      const amount = parsedTokenAccount.amount;
-      const uiAmount = Number(amount) / Math.pow(10, tokenDef.decimals);
-      balances[tokenDef.symbol] = uiAmount;
+        const data = Buffer.from(value.account.data);
+        const mintAddress = new PublicKey(data.slice(0, 32)).toBase58();
+        logger.info(`Extracted mint address: ${mintAddress}`);
+
+        const tokenDef = tokenDefs[mintAddress];
+        if (tokenDef === undefined) {
+          logger.info(`No token definition found for mint ${mintAddress}`);
+          continue;
+        }
+
+        const amount = parsedTokenAccount.amount;
+        const uiAmount = Number(amount) / Math.pow(10, tokenDef.decimals);
+        balances[tokenDef.symbol] = uiAmount;
+        logger.info(`Added balance for ${tokenDef.symbol}: ${uiAmount}`);
+      } catch (err) {
+        logger.error(`Error processing token account: ${err}`);
+      }
     }
 
+    logger.info('=== Final Results ===');
+    logger.info(`Final balances: ${JSON.stringify(balances)}`);
     return balances;
   }
 
   async getBalances(wallet: Keypair): Promise<Record<string, TokenValue>> {
     let balances: Record<string, TokenValue> = {};
 
+    // Get unwrapped SOL balance
     balances['UNWRAPPED_SOL'] = await runWithRetryAndTimeout(
       this,
       this.getSolBalance,
       [wallet]
     );
 
+    // Get all SPL token balances
     const allSplTokens = await runWithRetryAndTimeout(
       this.connection,
       this.connection.getParsedTokenAccountsByOwner,
       [wallet.publicKey, { programId: this._tokenProgramAddress }]
     );
 
+    // Process token balances
     allSplTokens.value.forEach(
       (tokenAccount: {
         pubkey: PublicKey;
@@ -404,39 +485,6 @@ export class Solana implements Solanaish {
           );
       }
     );
-
-    let allSolBalance = BigNumber.from(0);
-    let allSolDecimals;
-
-    if (balances['UNWRAPPED_SOL'] && balances['UNWRAPPED_SOL'].value) {
-      allSolBalance = allSolBalance.add(balances['UNWRAPPED_SOL'].value);
-      allSolDecimals = balances['UNWRAPPED_SOL'].decimals;
-    }
-
-    if (balances['SOL'] && balances['SOL'].value) {
-      allSolBalance = allSolBalance.add(balances['SOL'].value);
-      allSolDecimals = balances['SOL'].decimals;
-    } else {
-      balances['SOL'] = {
-        value: allSolBalance,
-        decimals: getNotNullOrThrowError<number>(allSolDecimals),
-      };
-    }
-
-    balances['ALL_SOL'] = {
-      value: allSolBalance,
-      decimals: getNotNullOrThrowError<number>(allSolDecimals),
-    };
-
-    balances = Object.keys(balances)
-      .sort((key1: string, key2: string) =>
-        key1.toUpperCase().localeCompare(key2.toUpperCase())
-      )
-      .reduce((target: Record<string, TokenValue>, key) => {
-        target[key] = balances[key];
-
-        return target;
-      }, {});
 
     return balances;
   }
