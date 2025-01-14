@@ -1,0 +1,16 @@
+networks:
+  mainnet-beta:
+    nodeURL: >-
+      https://mainnet.helius-rpc.com/?api-key=1ca3e668-a0bb-4bca-96a7-e937f307c40d
+    tokenListType: FILE
+    tokenListSource: conf/lists/solflare-tokenlist.json
+    nativeCurrencySymbol: SOL
+  devnet:
+    nodeURL: https://api.devnet.solana.com
+    tokenListType: FILE
+    tokenListSource: conf/lists/solflare-tokenlist.json
+    nativeCurrencySymbol: SOL
+tokenProgram: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+transactionLamports: 5000
+lamportsToSol: 1.e-9
+timeToLive: 75
