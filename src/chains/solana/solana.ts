@@ -160,6 +160,7 @@ export class Solana implements Solanaish {
   }
 
   async init(): Promise<void> {
+    console.log("Initializing Solana instance...");
     if (!this.ready() && !this.initializing) {
       try {
         this.initializing = true;
@@ -169,8 +170,9 @@ export class Solana implements Solanaish {
         
         // Set ready state
         this._ready = true;
+        console.log("Solana instance initialized successfully");
       } catch (error) {
-        logger.error(`Failed to initialize Solana instance: ${error.message}`);
+        console.error(`Failed to initialize Solana instance: ${error.message}`);
         throw error;
       } finally {
         this.initializing = false;
@@ -206,11 +208,24 @@ export class Solana implements Solanaish {
 
 
   async loadTokens(): Promise<void> {
+    console.log("Loading tokens...");
     this.tokenList = await this.getTokenList();
+    console.log(`Loaded ${this.tokenList.length} tokens`);
+    
     this.tokenList.forEach((token: TokenInfo) => {
       this._tokenMap[token.symbol] = token;
       this._tokenAddressMap[token.address] = token;
+      
+      // Debug first few tokens to verify loading
+      if (Object.keys(this._tokenMap).length < 5) {
+        console.log(`Loaded token: ${token.symbol} (${token.address})`);
+      }
     });
+    
+    // Debug specific token
+    console.log(`ai16z token info:`, this._tokenMap['ai16z']);
+    console.log(`Token map contains ${Object.keys(this._tokenMap).length} entries`);
+    console.log(`First few tokens in map:`, Object.keys(this._tokenMap).slice(0, 5));
   }
 
   // returns a Tokens for a given list source and list type

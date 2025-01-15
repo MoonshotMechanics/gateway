@@ -71,6 +71,7 @@ export class Jupiter {
   }
 
   getSlippagePct(): number {
+    const DEFAULT_SLIPPAGE = 1.0; // 1%
     const allowedSlippage = this._config.allowedSlippage;
     const nd = allowedSlippage.match(percentRegexp);
     let slippage = 0.0;
@@ -78,6 +79,7 @@ export class Jupiter {
         slippage = Number(nd[1]) / Number(nd[2]);
     } else {
         logger.error('Failed to parse slippage value:', allowedSlippage);
+        return DEFAULT_SLIPPAGE;
     }
     return slippage * 100;
   }
@@ -115,14 +117,22 @@ export class Jupiter {
       swapMode,
     };
 
-    const quote = await this.jupiterQuoteApi.quoteGet(params);
+    console.log('Requesting Jupiter quote with params:', params);
 
-    if (!quote) {
-      logger.error('Unable to get quote');
-      throw new Error('Unable to get quote');
+    try {
+      const quote = await this.jupiterQuoteApi.quoteGet(params);
+      console.log('Jupiter quote response:', quote);
+
+      if (!quote) {
+        logger.error('Unable to get quote');
+        throw new Error('Unable to get quote');
+      }
+
+      return quote;
+    } catch (error) {
+      console.error('Jupiter API error:', error.response?.data || error);
+      throw error;
     }
-
-    return quote;
   }
 
   async getSwapObj(wallet: Wallet, quote: QuoteResponse, priorityFee?: number): Promise<SwapResponse> {

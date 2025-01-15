@@ -47,58 +47,101 @@ export async function getTradeInfo(
   tradeSide: string,
   allowedSlippage?: string,
 ): Promise<{ tradeInfo: TradeInfo; quote: QuoteResponse }> {
-  const baseToken: TokenInfo = solanaish.getTokenForSymbol(baseAsset);
-  const quoteToken: TokenInfo = solanaish.getTokenForSymbol(quoteAsset);
-  const requestAmount = Math.floor(amount * DECIMAL_MULTIPLIER ** baseToken.decimals);
-
-  const slippagePct = allowedSlippage ? Number(allowedSlippage) : jupiter.getSlippagePct();
-
-  let quote: QuoteResponse;
-  if (tradeSide === 'BUY') {
-    quote = await jupiter.getQuote(
-      quoteToken.symbol,
-      baseToken.symbol,
-      amount,
-      slippagePct,
-      false, // not restricting to direct routes
-      false, // not using legacy transactions
-      'ExactOut'
-    );
-  } else {
-    quote = await jupiter.getQuote(
-      baseToken.symbol,
-      quoteToken.symbol,
-      amount,
-      slippagePct,
-      false, // not restricting to direct routes
-      false, // not using legacy transactions
-      'ExactIn'
-    );
-  }
+  console.log(`Getting trade info for ${baseAsset}-${quoteAsset}`);
   
-  const baseAmount = tradeSide === 'BUY'
-    ? Number(quote.outAmount) / (10 ** baseToken.decimals)
-    : Number(quote.inAmount) / (10 ** baseToken.decimals)
-  const quoteAmount = tradeSide === 'BUY'
-    ? Number(quote.inAmount) / (10 ** quoteToken.decimals)
-    : Number(quote.outAmount) / (10 ** quoteToken.decimals)
+  const baseToken: TokenInfo = solanaish.getTokenForSymbol(baseAsset);
+  console.log('Base token:', baseToken);
+  
+  const quoteToken: TokenInfo = solanaish.getTokenForSymbol(quoteAsset);
+  console.log('Quote token:', quoteToken);
+  
+  if (!baseToken) {
+    throw new Error(`Base token ${baseAsset} not found in token list`);
+  }
+  if (!quoteToken) {
+    throw new Error(`Quote token ${quoteAsset} not found in token list`);
+  }
 
-  const expectedPrice = Number(quoteAmount) / Number(baseAmount);
-  const expectedAmount = Number(quoteAmount);
+  const requestAmount = Math.floor(amount * DECIMAL_MULTIPLIER ** baseToken.decimals);
+  console.log('Request amount:', requestAmount);
 
-  const gasEstimate = await estimateGas(solanaish, jupiter);
+  let slippagePct = allowedSlippage 
+    ? Number(allowedSlippage) 
+    : jupiter.getSlippagePct();
 
-  return {
-    tradeInfo: {
-      baseToken,
-      quoteToken,
-      requestAmount,
-      expectedPrice,
-      expectedAmount,
-      gasEstimate,
-    },
-    quote,
-  };
+  // Add safety check
+  if (isNaN(slippagePct) || slippagePct <= 0) {
+    const DEFAULT_SLIPPAGE = 1.0;  // 1%
+    logger.warn(`Invalid slippage value ${slippagePct}, using default ${DEFAULT_SLIPPAGE}%`);
+    slippagePct = DEFAULT_SLIPPAGE;
+  }
+
+  console.log('Slippage:', slippagePct);
+
+  try {
+    let quote: QuoteResponse;
+    if (tradeSide === 'BUY') {
+      console.log('Getting BUY quote...');
+      quote = await jupiter.getQuote(
+        quoteToken.symbol,
+        baseToken.symbol,
+        amount,
+        slippagePct,
+        false,
+        false,
+      );
+    } else {
+      console.log('Getting SELL quote...');
+      quote = await jupiter.getQuote(
+        baseToken.symbol,
+        quoteToken.symbol,
+        amount,
+        slippagePct,
+        false,
+        false,
+        'ExactIn'
+      );
+    }
+    console.log('Quote received:', quote);
+
+    const baseAmount = tradeSide === 'BUY'
+      ? Number(quote.outAmount) / (10 ** baseToken.decimals)
+      : Number(quote.inAmount) / (10 ** baseToken.decimals)
+    const quoteAmount = tradeSide === 'BUY'
+      ? Number(quote.inAmount) / (10 ** quoteToken.decimals)
+      : Number(quote.outAmount) / (10 ** quoteToken.decimals)
+
+    const expectedPrice = Number(quoteAmount) / Number(baseAmount);
+    const expectedAmount = Number(quoteAmount);
+
+    const gasEstimate = await estimateGas(solanaish, jupiter);
+
+    return {
+      tradeInfo: {
+        baseToken,
+        quoteToken,
+        requestAmount,
+        expectedPrice,
+        expectedAmount,
+        gasEstimate,
+      },
+      quote,
+    };
+  } catch (e) {
+    if (e instanceof Error) {
+      throw new HttpException(
+        500,
+        PRICE_FAILED_ERROR_MESSAGE + e.message,
+        PRICE_FAILED_ERROR_CODE
+      );
+    } else {
+      throw new HttpException(
+        500,
+        UNKNOWN_ERROR_MESSAGE,
+        UNKNOWN_ERROR_ERROR_CODE
+      );
+    }
+  }
 }
 
 export async function price(
