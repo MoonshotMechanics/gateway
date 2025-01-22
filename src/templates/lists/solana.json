@@ -1,6 +1,13 @@
 [
   {
     "chainId": 101,
+    "name": "AI16Z",
+    "symbol": "AI16Z", 
+    "address": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+    "decimals": 9
+  },
+  {
+    "chainId": 101,
     "name": "gulp",
     "symbol": "$",
     "address": "8gsccGREpFttkH813odWMfHGtDRu8MjjyKvTN782WFaP",

@@ -112,6 +112,27 @@ export class Solana implements Solanaish {
   constructor(network: string) {
     this.network = network;
     this._config = getSolanaConfig('solana', network);
+    console.log("Initializing Solana with config:", {
+        network: this.network,
+        tokenListSource: this._config.network.tokenListSource,
+        tokenListType: this._config.network.tokenListType
+    });
+    
+    // Add detailed logging for token list source
+    try {
+        const fs = require('fs');
+        if (fs.existsSync(this._config.network.tokenListSource)) {
+            const tokenList = JSON.parse(fs.readFileSync(this._config.network.tokenListSource, 'utf8'));
+            console.log("First token in source file:", tokenList[0]);
+            console.log("Total tokens in source file:", tokenList.length);
+        } else {
+            console.log("Token list file not found at:", this._config.network.tokenListSource);
+            console.log("Current working directory:", process.cwd());
+        }
+    } catch (error) {
+        console.log("Error reading token list source:", error.message);
+    }
+    
     this.nativeTokenSymbol = this._config.network.nativeCurrencySymbol
     this.defaultComputeUnits = this._config.defaultComputeUnits;
     this.priorityFeePercentile = this._config.priorityFeePercentile;
@@ -212,20 +233,23 @@ export class Solana implements Solanaish {
     this.tokenList = await this.getTokenList();
     console.log(`Loaded ${this.tokenList.length} tokens`);
     
+    // Debug token map before population
+    console.log("Token map before:", Object.keys(this._tokenMap).length);
+    
     this.tokenList.forEach((token: TokenInfo) => {
+      // Store tokens with original case
       this._tokenMap[token.symbol] = token;
       this._tokenAddressMap[token.address] = token;
       
-      // Debug first few tokens to verify loading
-      if (Object.keys(this._tokenMap).length < 5) {
-        console.log(`Loaded token: ${token.symbol} (${token.address})`);
+      if (token.symbol === 'AI16Z') {
+        console.log('Found AI16Z token during loading:', token);
       }
     });
     
-    // Debug specific token
-    console.log(`ai16z token info:`, this._tokenMap['ai16z']);
-    console.log(`Token map contains ${Object.keys(this._tokenMap).length} entries`);
-    console.log(`First few tokens in map:`, Object.keys(this._tokenMap).slice(0, 5));
+    // Debug final state
+    console.log("Token map after:", Object.keys(this._tokenMap).length);
+    console.log("AI16Z lookup test:", this._tokenMap['AI16Z']);
+    console.log("First few tokens:", Object.keys(this._tokenMap).slice(0, 5));
   }
 
   // returns a Tokens for a given list source and list type
@@ -236,8 +260,16 @@ export class Solana implements Solanaish {
         this._config.network.tokenListType
       ).resolve();
 
+    console.log("Pre-filter tokens:", tokens.length);
+    console.log("First token pre-filter:", tokens[0]);
+    
     const tokenListContainer = new TokenListContainer(tokens);
-    return tokenListContainer.filterByClusterSlug(this.network).getList();
+    const filteredList = tokenListContainer.filterByClusterSlug(this.network).getList();
+    
+    console.log("Post-filter tokens:", filteredList.length);
+    console.log("First token post-filter:", filteredList[0]);
+    
+    return filteredList;
   }
 
   // solana token lists are large. instead of reloading each time with
@@ -249,7 +281,15 @@ export class Solana implements Solanaish {
 
   // return the TokenInfo object for a symbol
   getTokenForSymbol(symbol: string): TokenInfo | null {
-    return this._tokenMap[symbol] ?? null;
+    if (!this._ready) {
+      console.log("Warning: Trying to get token before initialization");
+      throw new Error("Solana instance not initialized");
+    }
+    
+    console.log(`Looking up token symbol: "${symbol}"`);
+    const token = this._tokenMap[symbol];
+    console.log(`Found token:`, token);
+    return token ?? null;
   }
 
   // returns Keypair for a private key, which should be encoded in Base58
